@@ -1,0 +1,124 @@
+REVISION DEL SISTEMA CARDINOVA
+Fecha: 13/10/2026
+
+ACTUALIZACION DE ALCANCE - FASE ACTUAL
+El usuario pidió pausar en esta fase las tareas de integración, latencia y conectividad relacionadas con Odoo. No se amplían en esta fase; el código de Odoo y métricas que ya estaba en la copia se conserva. El foco actual es operación interna: permisos por zona y acción, control de usuarios, consulta/exportación de registros y auditoría.
+
+Implementado en esta fase:
+- Roles ADMIN/OPERATOR/VIEWER con asignación de zonas por usuario; ADMIN tiene alcance global y los otros roles requieren una o más zonas.
+- Las órdenes nuevas pertenecen a una zona; órdenes, cámaras, eventos, detecciones, tendencias y dashboard se filtran/validan por alcance.
+- La zona se guarda como snapshot en eventos y detecciones. Cambiar la zona de una cámara no reclasifica su historial.
+- Asociaciones entre eventos y órdenes de zonas diferentes se rechazan. Confirmar una unidad terminada sigue siendo una acción OPERATOR/ADMIN.
+- La interfaz de usuarios permite administrar zonas; producción muestra la zona y solo presenta acciones compatibles con el rol.
+- Eventos, órdenes, detecciones y auditoría tienen exportación CSV. Los archivos aplican el mismo alcance de acceso que las consultas.
+- Hay auditoría de cambios administrativos y una vista de historial; los detalles no incluyen passwords, claves Odoo ni fuentes de cámara.
+- Se añadieron migraciones para auditoría, alcance de usuario/orden y snapshot de zona en registros históricos.
+
+Pendiente fuera de esta fase:
+- No se añadió trabajo nuevo de Odoo ni métricas de latencia/conectividad. La integración existente se mantiene sin ampliaciones.
+- La semántica de etapa final usa VINILADO como configuración por defecto. Si el flujo de planta difiere, cambiar FINAL_PRODUCTION_STAGE antes de usar el conteo.
+- Respaldos/restauración requieren que operación ejecute y valide periódicamente los scripts documentados; no se configura un scheduler de respaldo en esta fase.
+
+Alcance
+Revision estatica del frontend React/TypeScript y del backend FastAPI/PostgreSQL/YOLO/Odoo, mas ejecucion de build, lint y pruebas backend. Este documento distingue las mejoras que el usuario reporta como realizadas de las que todavia se observan pendientes en la copia revisada.
+
+1. Mejoras reportadas como realizadas
+El usuario indica que ya trabajo en estos puntos. Conviene confirmar que los cambios esten en esta copia del proyecto y cubrirlos con pruebas de aceptacion:
+
+- Odoo: cola de reintentos, registro de intentos y errores, idempotencia y paginacion al importar ordenes.
+- Administracion de usuarios desde la aplicacion: crear usuarios, desactivar cuentas, asignar roles y restablecer contrasenas.
+- Camaras: deteccion periodica de desconexiones, reconexion y alertas visibles.
+- Frontend: carga diferida de vistas para reducir el bundle inicial.
+- Frontend: correccion de las advertencias de lint de React y dependencias de efectos.
+- Eventos: filtros por fecha, paginacion y exportacion; monitoreo de disponibilidad y latencia en produccion.
+
+Estado observado en la copia revisada
+Estos elementos no aparecen implementados en los archivos inspeccionados: el cliente Odoo no tiene una operacion de escritura para eventos; el servicio llega a marcar eventos como sincronizados localmente. No se encontraron rutas ni pantalla de administracion de usuarios. El estado de camaras se prueba manualmente, sin monitor periodico. Las vistas se importan estaticamente, el bundle principal de produccion fue de aproximadamente 816 kB y Eventos solicita la lista sin fechas ni paginacion. El lint reporto 12 advertencias. La suite backend tuvo 16 pruebas aprobadas y una fallida por esperar tres camaras cuando la base usada por la prueba no contiene ninguna.
+
+Estas diferencias pueden significar que los cambios aun no se guardaron en esta copia. Antes de dar por terminados los puntos, verificar el codigo y las pruebas indicadas en la seccion 4.
+
+Nota de vigencia: el parrafo anterior es el resultado de la inspeccion inicial. La seccion ACTUALIZACION DE ALCANCE - FASE ACTUAL y los cambios recientes descritos abajo lo reemplazan para el estado actual del workspace.
+
+2. Hallazgos adicionales prioritarios
+
+P0 - Integridad de sincronizacion Odoo
+En la copia revisada, sync_pending_events_to_odoo() cambia sync_status a SINCRONIZADO sin ejecutar una escritura remota. OdooClient solo consulta ordenes y prueba la conexion. Una cola con reintentos no basta si no existe una operacion remota confirmable.
+Recomendacion: definir el destino y contrato de eventos en Odoo; enviar un identificador externo estable por evento; comprobar primero si ya fue recibido; marcar SINCRONIZADO solo despues de una confirmacion remota. Si la respuesta es incierta, conservar el evento para reintento idempotente.
+Criterio: una prueba con un Odoo simulado verifica envio, deduplicacion, error recuperable, reintento y que ningun fallo termine en SINCRONIZADO.
+
+P0 - Secretos y credenciales de produccion
+La configuracion tiene una clave JWT y credenciales de base de datos predeterminadas. El script de administracion permite crear el usuario admin con la contrasena admin123 si no se reemplaza. La clave API de Odoo se guarda como texto en la tabla de configuracion.
+Recomendacion: fallar al iniciar en produccion si siguen valores de desarrollo; quitar contrasenas predeterminadas; usar secretos del entorno o un gestor de secretos y restringir el acceso a respaldos. Rotar las credenciales ya usadas en entornos accesibles.
+Criterio: una configuracion de produccion con secretos por defecto no inicia y ningun secreto aparece en respuestas, logs o exportaciones.
+
+P1 - Proteccion de credenciales de camaras
+La respuesta Camera incluye el campo source para cualquier usuario autenticado. Una URL RTSP puede contener usuario y contrasena y la interfaz la muestra. Esto expone credenciales a operadores/viewers y potencialmente a logs del navegador.
+Recomendacion: separar la configuracion sensible de la fuente publica; devolverla solo a administradores o enmascarada; evitar mostrar credenciales y rotarlas si ya fueron compartidas.
+Criterio: respuestas de lectura para roles no administradores no contienen usuario/contrasena ni URL de conexion reutilizable.
+
+P1 - Sesiones del frontend
+El JWT de sesion se guarda en localStorage, accesible a cualquier script ejecutado en el origen. El stream ya se cambio en esta revision para usar tickets de dos minutos ligados a la camara y al usuario, en vez del JWT de sesion en la URL.
+Recomendacion adicional: evaluar cookies HttpOnly/Secure/SameSite con proteccion CSRF; si se conserva localStorage, reforzar CSP, dependencias y defensa XSS, y definir expiracion/renovacion de sesion.
+
+P1 - Monitoreo real de camaras y recuperacion
+La API actualiza estado al ejecutar la prueba manual de conexion; no hay una comprobacion periodica ni una politica de reconexion. El estado puede quedar obsoleto aunque el stream se haya perdido.
+Recomendacion: servicio de salud con intervalos configurables, backoff, ultimo resultado y alerta persistente; coordinar las capturas para que la comprobacion no compita por una camara USB que esta transmitiendo. Mostrar estado, antiguedad del ultimo chequeo y accion de recuperar.
+Criterio: desconectar una camara actualiza su estado dentro del intervalo acordado, genera una alerta y la reconexion no duplica streams.
+
+P1 - Semantica de produccion y conteos
+Asociar un evento actualiza la etapa y el estado de una orden, pero no se observa una regla de negocio que incremente produced_qty o cierre una orden. La definicion de conteo debe corresponder a eventos de fin de producto, no a cada deteccion de etapa.
+Recomendacion: acordar la maquina de estados y las transiciones validas; derivar cantidades de eventos idempotentes y auditar correcciones manuales.
+Criterio: eventos repetidos o reintentados no incrementan dos veces la cantidad, y solo un evento de finalizacion autorizado cierra una unidad/orden.
+
+P1 - Disponibilidad y latencia en produccion
+El health check informa el estado de la base, YOLO y Odoo, pero la condicion global depende principalmente de la base. El dashboard tambien prueba Odoo en la peticion, lo que puede sumar el timeout remoto a una consulta interactiva.
+Recomendacion: separar liveness y readiness, medir latencia y errores por dependencia, evitar llamadas externas bloqueantes en cada consulta del dashboard y publicar metricas protegidas para alertas (API, base, YOLO, camaras, Odoo y cola).
+Criterio: una caida de cada dependencia se refleja con claridad; el panel sigue respondiendo aunque Odoo este lento; se generan alertas con umbrales definidos.
+
+P2 - Subida de imagenes y recursos
+El endpoint lee el archivo completo en memoria antes de verificar el limite de 15 MB y confia en Content-Type para decidir si es imagen. El tipo puede falsificarse y muchas cargas simultaneas elevan memoria y CPU.
+Recomendacion: lectura por bloques con limite, validacion real del formato y dimensiones maximas, limites de concurrencia y timeout de inferencia.
+Criterio: archivos sobredimensionados, corruptos o con formato no admitido se rechazan antes de inferencia sin aumentar memoria de forma proporcional al tamano enviado.
+
+P2 - Escalabilidad de inferencia
+Las camaras y las inferencias de imagen comparten el mismo modelo y bloqueo de inferencia. Con varias camaras, la latencia puede crecer y el stream puede quedar limitado por el recurso compartido.
+Recomendacion: medir latencia por camara y carga; establecer politica de prioridad/admission control; considerar un procesador central de frames recientes por camara. Si se ejecuta con varios workers, documentar que cada proceso podria cargar su propia copia del modelo.
+Criterio: prueba con el numero esperado de camaras mantiene el FPS/latencia objetivo y el consumo de RAM/VRAM dentro del presupuesto.
+
+P2 - Pruebas reproducibles
+La prueba que exige tres camaras depende de datos presentes en la base configurada, y fallo en la ejecucion local. Esto hace que el resultado dependa del entorno y puede tocar datos ajenos a la prueba.
+Recomendacion: usar una base aislada de test, sembrar fixtures dentro de la suite y limpiar/rollback entre pruebas. Agregar pruebas de roles, expiracion de tickets, idempotencia Odoo, filtros/paginacion y reconexion de camaras.
+Criterio: pytest pasa desde una base vacia y no requiere haber ejecutado scripts manuales ni conectarse a servicios reales.
+
+P3 - Auditoria y retencion
+No se identifico una politica completa para auditar cambios de roles/configuracion ni para retener o depurar detecciones, eventos y metadatos de sincronizacion.
+Recomendacion: registrar actor, accion, fecha y resultado para operaciones administrativas; definir retencion/archivado y respaldo con restauracion probada.
+
+Estado posterior a la implementacion
+- Aplicados en codigo: claves de produccion seguras, cifrado de credenciales persistidas, acceso zonal, snapshots historicos, administracion de usuarios, alertas/reintento de camaras, filtros/paginacion y CSV de eventos/ordenes/detecciones/auditoria, auditoria administrativa, scripts de respaldo/restauracion/retencion, validacion de imagenes, conteo explicito/idempotente de unidad y lazy loading.
+- Build inicial: alrededor de 269 kB frente a los aproximadamente 816 kB de la inspeccion inicial. `npm run lint` termina sin advertencias.
+- Suite backend: 34 pruebas aprobadas. Alembic está en `d9164a70be21`.
+- Pospuesto por solicitud: no ampliar Odoo ni latencia/conectividad en esta fase. Los endpoints/servicios Odoo y las metricas que ya existian se conservan; se recomienda no considerarlos validados contra una instancia Odoo real.
+- Pendiente operativo: programar respaldos con infraestructura, ensayar restauraciones regularmente y asignar zonas a usuarios existentes desde Usuarios antes de devolverles acceso.
+
+3. Orden sugerido
+1. Verificar el envio real de eventos a Odoo y proteger la configuracion de produccion.
+2. Revisar la exposicion de fuentes RTSP y terminar la politica de acceso a streams.
+3. Hacer reproducibles las pruebas y cubrir los flujos criticos con integracion simulada.
+4. Completar el monitoreo de camaras, dependencias y cola con alertas y recuperacion.
+5. Definir reglas de conteo/estado de produccion y validar datos historicos.
+6. Medir rendimiento con carga representativa; aplicar lazy loading y optimizaciones segun metricas.
+7. Formalizar auditoria, retencion, respaldos y restauracion.
+
+4. Verificaciones de aceptacion para las mejoras reportadas
+- Odoo: demostrar escritura remota de eventos, idempotencia tras timeout y paginacion sin perder/duplicar ordenes.
+- Usuarios: probar permisos ADMIN/OPERATOR/VIEWER, bloqueo del ultimo administrador activo y revocacion de acceso tras desactivar una cuenta.
+- Camaras: simular perdida y recuperacion de señal sin duplicar captura ni bloquear el resto.
+- Bundle/lint: build con vistas separadas y sin advertencias nuevas; documentar el tamano del chunk inicial.
+- Eventos: probar filtros de fecha con zona horaria, paginas consecutivas sin duplicados y CSV que respeta los filtros.
+- Monitoreo: probar latencia/indisponibilidad simulada y verificar umbrales/alertas en el entorno de produccion.
+
+Cambios aplicados durante esta revision
+- El stream de camara ahora requiere un ticket JWT de corta duracion ligado al usuario y a la camara; el frontend lo solicita con autenticacion y deja de incluir el JWT de sesion en la URL.
+- Se agrego una prueba que verifica que una solicitud de stream sin ticket devuelve 401.
+- Validaciones ejecutadas: prueba focalizada del stream aprobada y build del frontend aprobada. La build aun muestra un chunk principal cercano a 816 kB.

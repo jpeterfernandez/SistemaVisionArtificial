@@ -1,0 +1,454 @@
+GUIA DEL PROYECTO: CARDINOVA - VISION ARTIFICIAL Y PRODUCCION
+================================================================
+
+Este documento describe el backend que existe en esta carpeta, segun la
+revision de sus archivos fuente. Distingue las funciones implementadas de las
+que solo aparecen como configuracion o comentario.
+
+
+1. QUE ES ESTE SISTEMA
+----------------------
+
+Este proyecto es el backend de una API para controlar produccion con apoyo de
+vision artificial. Expone servicios HTTP con FastAPI, usa PostgreSQL para
+guardar usuarios, camaras, detecciones, eventos, ordenes y configuracion, y
+ejecuta un modelo YOLO con los pesos best.pt.
+
+Tambien contiene un cliente de integracion con Odoo mediante XML-RPC. No hay
+una aplicacion frontend dentro de esta carpeta: el frontend, si existe, debe
+ser otro proyecto que consuma esta API.
+
+Tecnologias principales:
+- Python y FastAPI para la API REST y la documentacion OpenAPI.
+- SQLAlchemy 2 para el acceso a PostgreSQL.
+- Alembic para las migraciones del esquema de la base de datos.
+- Pydantic y pydantic-settings para validar datos y leer configuracion.
+- PyJWT y bcrypt para tokens y contrasenas.
+- Ultralytics YOLO, OpenCV, NumPy y Pillow para inferencia y video.
+- XML-RPC estandar de Python para comunicarse con Odoo.
+- pytest y FastAPI TestClient para las pruebas automatizadas.
+
+
+2. ESTRUCTURA DEL PROYECTO
+--------------------------
+
+server/
+|-- app/                         Aplicacion modular del backend
+|   |-- main.py                  Construye la aplicacion FastAPI
+|   |-- api/                     Rutas, dependencias y agrupacion de endpoints
+|   |   |-- dependencies.py      Sesion de usuario, JWT y permisos por rol
+|   |   |-- router.py            Registra los routers de la version 1
+|   |   `-- v1/endpoints/        Controladores HTTP agrupados por funcion
+|   |-- core/                    Configuracion, seguridad, errores y logging
+|   |-- db/                      Conexion, Base ORM y modelos SQLAlchemy
+|   |-- integrations/            Cliente de sistemas externos (Odoo)
+|   |-- repositories/            Consultas y operaciones sobre la base de datos
+|   |-- schemas/                 Contratos y validacion de peticiones/respuestas
+|   |-- scripts/                 Inicializacion de usuario y datos de ejemplo
+|   `-- services/                Logica de negocio, YOLO y sincronizacion
+|-- alembic/                     Historial y entorno de migraciones
+|   `-- versions/                Revisiones concretas del esquema
+|-- tests/                       Pruebas de endpoints y servicios
+|-- best.pt                      Pesos entrenados del modelo YOLO
+|-- main.py                      Punto de entrada que reexporta app.main:app
+|-- prueba.py                    Programa independiente de prueba de camara/YOLO
+|-- requirements.txt             Dependencias de Python
+|-- alembic.ini                  Configuracion de Alembic
+|-- README.md                    Instrucciones breves originales del proyecto
+|-- test_main.http               Peticiones de ejemplo para REST Client
+|-- .env.example                 Plantilla de variables de entorno
+`-- .env                         Configuracion local; no se copian sus valores aqui
+
+Tambien pueden aparecer carpetas de herramientas como .idea/, .vscode/ y
+.pytest_cache/. No son parte de la arquitectura del backend: guardan ajustes
+del editor o resultados locales de pruebas. La carpeta storage/ esta definida
+como destino configurable, pero no se encontro como carpeta fuente del
+proyecto en esta revision.
+
+Detalle de los modulos principales:
+
+- app/api/v1/endpoints/: auth.py gestiona inicio de sesion; cameras.py las
+  camaras y el stream; dashboard.py las estadisticas; detections.py las
+  inferencias; events.py los eventos; health.py la salud; models.py el estado
+  del modelo; odoo.py la integracion; production.py las ordenes; settings.py
+  la configuracion persistida.
+- app/core/: config.py carga las variables; security.py firma/verifica JWT y
+  contrasenas; exceptions.py define errores HTTP del dominio; logging.py
+  configura el registro en consola.
+- app/db/: session.py crea el engine y las sesiones SQLAlchemy; base.py define
+  la clase ORM Base; models/ declara las tablas y relaciones.
+- app/integrations/odoo_client.py encapsula las llamadas XML-RPC a Odoo.
+- app/repositories/: una clase por entidad centraliza consultas/guardados de
+  camaras, detecciones, eventos, ordenes, ajustes y usuarios.
+- app/schemas/: modelos Pydantic de entrada y salida para cada dominio.
+- app/services/: detection_service.py conecta YOLO con el guardado de
+  detecciones/eventos; yolo_service.py administra el modelo; production_service.py
+  implementa ordenes, asociacion y cronologia; odoo_service.py configura y
+  coordina la integracion/sincronizacion.
+- app/scripts/create_admin.py crea un usuario admin o actualiza uno existente.
+- app/scripts/seed_cameras.py registra camaras iniciales y el mapa clase-etapa.
+- alembic/versions/2db0882f1809_initial_cardinova_schema.py es la migracion
+  inicial. alembic/env.py conecta Alembic con la configuracion y modelos ORM;
+  script.py.mako es la plantilla para nuevas migraciones.
+- tests/conftest.py prepara TestClient y encabezados de admin. test_backend.py
+  cubre autenticacion, salud, detecciones, ordenes, Odoo y dashboard.
+
+
+3. ARQUITECTURA Y RECORRIDO DE UNA PETICION
+-------------------------------------------
+
+El punto de entrada recomendado por el README es `uvicorn main:app`. El archivo
+raiz main.py importa la aplicacion app desde app.main. app.main configura
+FastAPI, CORS, el manejador de excepciones y monta api_router bajo el prefijo
+`/api/v1`. El router registra cada grupo de endpoints.
+
+Recorrido comun:
+
+Cliente HTTP
+  -> app/main.py y api/router.py
+  -> endpoint de app/api/v1/endpoints/
+  -> dependencia de autenticacion y/o sesion DB cuando se requiere
+  -> service para reglas de negocio
+  -> repository para consultar o guardar con SQLAlchemy
+  -> modelo ORM y PostgreSQL
+  -> schema Pydantic para validar/formatear la respuesta
+
+No todos los endpoints recorren todas las capas: por ejemplo, health consulta
+la base directamente y models lee el estado del servicio YOLO. Los endpoints
+declarados con un schema de respuesta devuelven datos validados por Pydantic.
+
+La aplicacion registra logs al iniciar y al detenerse. El servicio YOLO se
+crea como singleton al importar su modulo y trata de cargar best.pt. Si no
+encuentra el archivo o falla la carga, la API puede arrancar, pero una solicitud
+de inferencia respondera con un error de servicio no disponible.
+
+
+4. FLUJO DE VISION Y PRODUCCION
+-------------------------------
+
+Inferencia con imagen:
+1. Un usuario autenticado envia una imagen a POST /api/v1/detections/image
+   como multipart/form-data. Se valida que el tipo empiece por image/ y que el
+   cuerpo no supere 15 MB.
+2. DetectionService busca la camara si se envio camera_id, determina el umbral
+   de confianza y llama a YoloService.
+3. YoloService decodifica los bytes con OpenCV, ejecuta YOLO y devuelve las
+   clases, confianza, cajas, tiempo de inferencia y una imagen anotada en
+   Base64.
+4. DetectionService guarda cada deteccion en PostgreSQL y asigna una etapa a
+   partir de `class_stage_mapping` (o un mapa por defecto).
+5. Si hay camara y detecciones, puede crear un evento de produccion pendiente
+   de asociacion y sincronizacion. El evento no se asigna automaticamente a una
+   orden: order_id empieza vacio.
+
+Las etapas por defecto son DOBLADO_LAMINA, ARMADO_ESTRUCTURAL y VINILADO. La
+clase mas confiable de una inferencia decide la etapa del evento. Se evita
+repetir un evento de la misma etapa para la misma camara durante el periodo de
+enfriamiento configurado.
+
+Asociacion y orden:
+- Un usuario con rol OPERATOR o ADMIN puede asociar un evento pendiente a una
+  orden existente.
+- La asociacion actualiza el estado del evento a ASOCIADO, fija la etapa actual
+  de la orden y cambia una orden draft a progress.
+- La cronologia de la orden se calcula con eventos asociados y sus marcas de
+  tiempo.
+
+Camara en vivo:
+- GET /api/v1/cameras/{camera_id}/stream abre la fuente configurada, lee cuadros,
+  aplica inferencia YOLO para dibujar cajas y etiquetas, y los transmite como
+  multipart/x-mixed-replace (MJPEG).
+- Es una respuesta HTTP de streaming que puede mostrarse en un elemento img.
+  No es WebSocket: no hay una ruta WebSocket implementada en el codigo revisado.
+- El stream no guarda detecciones ni crea eventos; eso ocurre en el flujo de
+  carga de imagen, no en este generador de video.
+
+Importante sobre confirmacion: hay variables para confirmar etapas con varios
+cuadros y una ventana temporal, pero en el flujo actual de deteccion por imagen
+no se encontro esa confirmacion por cuadros consecutivos. La proteccion
+implementada es un enfriamiento que compara el ultimo evento de la camara y
+evita repetir la misma etapa dentro del intervalo configurado.
+
+
+5. HTTP, ENDPOINTS Y PERMISOS
+-----------------------------
+
+La API versionada usa el prefijo `/api/v1`. Los documentos interactivos de
+FastAPI estan en `/docs`, `/redoc` y `/openapi.json`.
+
+Convenciones de permisos de esta tabla:
+- Publico: no exige token segun el codigo actual.
+- Usuario: requiere un JWT Bearer valido y una cuenta activa.
+- Operator: requiere OPERATOR o ADMIN.
+- Admin: requiere ADMIN.
+- Publico (token opcional): acepta una consulta token si se proporciona, pero
+  el endpoint no obliga a enviarla.
+
+Rutas generales:
+- GET /                         Publico. Estado basico y enlace a documentacion.
+- GET /api/v1/health            Publico. Base de datos, estado YOLO y estado de
+                                configuracion Odoo.
+
+Autenticacion (`/api/v1/auth`):
+- POST /login                   Publico. Inicia sesion con formulario OAuth2.
+- GET /me                       Usuario. Devuelve el usuario del token actual.
+
+Dashboard (`/api/v1/dashboard`):
+- GET /stats                    Usuario. Conteos, estado, camaras y eventos
+                                recientes.
+- GET /production-trends        Usuario. Tendencias por etapa; requiere start y
+                                end, acepta interval_minutes de 1 a 60 y limita
+                                el rango a siete dias.
+
+Modelo (`/api/v1/models`):
+- GET /status                   Publico en la implementacion actual.
+- GET /classes                  Publico en la implementacion actual.
+
+Detecciones (`/api/v1/detections`):
+- POST /image                   Usuario. Inferencia con imagen multipart/form-data.
+- GET /                         Usuario. Lista paginada y filtrable por camara/clase.
+- GET /{detection_id}           Usuario. Consulta una deteccion.
+
+Eventos (`/api/v1/events`):
+- GET /                         Usuario. Lista con filtros de etapa, camara,
+                                orden, asociacion y sincronizacion.
+- GET /{event_id}               Usuario. Consulta un evento.
+- POST /{event_id}/associate    Operator. Asocia evento a una orden.
+
+Ordenes (`/api/v1/production`):
+- GET /orders                   Usuario. Lista ordenes.
+- GET /orders/{order_id}        Usuario. Consulta una orden.
+- POST /orders                  Operator. Crea una orden.
+- GET /orders/{order_id}/timeline Usuario. Consulta la cronologia.
+
+Camaras (`/api/v1/cameras`):
+- GET /                         Usuario. Lista camaras.
+- POST /                        Admin. Registra una camara.
+- GET /{camera_id}              Usuario. Consulta una camara.
+- PUT /{camera_id}              Admin. Actualiza una camara.
+- DELETE /{camera_id}           Admin. Elimina una camara.
+- POST /{camera_id}/test        Operator. Prueba la fuente de video.
+- GET /{camera_id}/stream       Publico (token opcional). Stream MJPEG.
+
+Odoo (`/api/v1/odoo`):
+- GET /config                   Admin. Lee parametros; informa si la clave esta
+                                configurada, pero no devuelve la clave.
+- PUT /config                   Admin. Cambia parametros y clave API.
+- GET /status                   Usuario. Prueba conexion/autenticacion si la
+                                integracion esta habilitada.
+- POST /sync-orders             Operator. Importa ordenes desde Odoo.
+- POST /sync-events             Operator. Procesa eventos pendientes.
+
+Configuracion (`/api/v1/settings`):
+- GET /                         Admin. Lista ajustes, omitiendo claves secretas
+                                Odoo.
+- PUT /{key}                    Admin. Cambia un ajuste. Las credenciales Odoo
+                                deben administrarse desde /odoo/config.
+
+Las respuestas de error del dominio usan el formato JSON `{"detail": ...}`.
+Entre los estados definidos estan 400 (solicitud incorrecta), 401 (sin
+autenticacion valida), 403 (rol insuficiente), 404 (no encontrado) y 503
+(modelo o fuente de video no disponible). FastAPI tambien puede responder 422
+cuando falla la validacion de parametros.
+
+
+6. TOKEN, CONTRASENAS Y ROLES
+-----------------------------
+
+Inicio de sesion:
+- POST /api/v1/auth/login usa OAuth2PasswordRequestForm: enviar
+  `Content-Type: application/x-www-form-urlencoded` con username y password.
+  No es un JSON de login.
+- Si las credenciales son correctas, la respuesta incluye access_token,
+  token_type=bearer y datos del usuario.
+- Para rutas protegidas, enviar el encabezado:
+  `Authorization: Bearer <access_token>`.
+
+El token es un JWT firmado con el algoritmo configurado (por defecto HS256).
+Incluye subject (nombre de usuario), rol, fecha de emision y vencimiento. La
+duracion por defecto configurada es 480 minutos. La clave de firma proviene de
+SECRET_KEY; cambiarla invalida los tokens ya emitidos. No se encontro endpoint
+de renovacion ni de cierre de sesion en el servidor.
+
+Las contrasenas se guardan como hash bcrypt, no como texto plano. Al verificar
+un token, la API busca el usuario en la base de datos y comprueba que exista y
+este activo. La comprobacion del permiso usa el rol actual del usuario en la
+base de datos.
+
+Jerarquia de permisos:
+- ADMIN puede acceder a los niveles ADMIN, OPERATOR y VIEWER.
+- OPERATOR puede acceder a OPERATOR y VIEWER.
+- VIEWER solo puede acceder a VIEWER.
+
+Observaciones de seguridad verificadas en el codigo:
+- /models/status y /models/classes no tienen dependencia de autenticacion.
+- /cameras/{camera_id}/stream no obliga a enviar token. Si llega uno, verifica
+  que sea un JWT valido, pero esa ruta no comprueba usuario activo ni rol.
+- El codigo tiene valores predeterminados de desarrollo para la clave JWT y la
+  conexion de base de datos. En cualquier despliegue real deben reemplazarse
+  mediante configuracion protegida; no usar contrasenas predeterminadas.
+- create_admin.py tiene valores de usuario/contrasena predeterminados y, si el
+  usuario ya existe, le cambia la contrasena y lo convierte en ADMIN.
+- Existe un .env local en el proyecto. Sus valores se omiten deliberadamente de
+  este documento. No publiques ese archivo ni incluyas secretos en capturas,
+  repositorios o solicitudes de soporte. Verifica que Git lo ignore: durante
+  la revision no se encontro una regla de exclusion local confirmada para .env.
+- El stream permite token en la URL. Las URL pueden terminar en historiales o
+  registros; protege el acceso al servidor y evita compartir tokens en enlaces.
+
+
+7. BASE DE DATOS Y MIGRACIONES
+------------------------------
+
+La conexion se configura con DATABASE_URL. SQLAlchemy crea un engine con
+pool_pre_ping, y cada peticion que usa get_db obtiene una sesion que se cierra
+al terminar.
+
+La migracion inicial crea estas tablas:
+- users: nombre, hash de contrasena, rol, estado activo y fechas.
+- cameras: nombre, zona, fuente, umbral YOLO, conectividad y fechas de chequeo.
+- production_orders: identificadores local/Odoo, producto, cantidades, estado,
+  etapa actual, notas y fecha de sincronizacion.
+- detections: camara opcional, clase, confianza, coordenadas de caja, tiempo de
+  inferencia y fecha.
+- production_events: camara/orden opcionales, etapa, tipo, estado de asociacion,
+  estado de sincronizacion, confianza, evidencia y metadatos JSON.
+- system_settings: clave, valor, descripcion y fecha de actualizacion.
+
+Las detecciones y eventos pueden conservarse si se elimina una camara (la
+referencia pasa a NULL). Los eventos tambien referencian una orden. Los nombres
+de usuario y de orden tienen restricciones de unicidad; el identificador Odoo
+de una orden tambien es unico cuando no es nulo.
+
+Para aplicar cambios de esquema se usa Alembic, que toma DATABASE_URL de la
+configuracion de la aplicacion. Comando habitual: `alembic upgrade head`.
+
+
+8. YOLO, CAMARAS Y ARCHIVOS DE IMAGEN
+------------------------------------
+
+YOLO_MODEL_PATH apunta por defecto a best.pt. El servicio carga los nombres de
+clase desde el modelo y expone su estado, dispositivo y umbrales. Los valores
+configurables incluyen confianza, IoU, tamanio de imagen y dispositivo (CPU
+por defecto).
+
+Las fuentes de camara pueden ser indices locales numericos, URL de camara IP o
+fuentes compatibles con OpenCV/VideoCapture. La prueba de conexion lee un
+cuadro y libera la captura. El endpoint stream mantiene una captura abierta
+mientras el cliente recibe el MJPEG.
+
+La configuracion declara STORAGE_DIR y SAVE_INFERENCE_IMAGES, pero el flujo
+revisado no guarda la imagen recibida ni la anotada en disco: image_path se
+guarda como nulo y la imagen anotada se devuelve en Base64.
+
+
+9. INTEGRACION CON ODOO
+-----------------------
+
+Odoo se conecta con XML-RPC en `/xmlrpc/2/common` para version/autenticacion y
+`/xmlrpc/2/object` para consultas. El cliente consulta el modelo
+`mrp.production` mediante search_read y limita la importacion a 100 ordenes.
+La actualizacion local intenta ser idempotente por id Odoo o nombre.
+
+La integracion queda desactivada si no existe el ajuste
+ODOO_INTEGRATION_ENABLED o si su valor es falso. Los parametros se leen primero
+de system_settings y luego de variables de entorno. La clave API no se devuelve
+en la respuesta de configuracion.
+
+Limite importante del flujo actual: `sync_pending_events_to_odoo` no realiza
+una escritura XML-RPC de los eventos en Odoo. Cuando Odoo responde conectado y
+autenticado, marca localmente como SINCRONIZADO los eventos que ya tienen orden
+y estado ASOCIADO. Por lo tanto, ese endpoint no demuestra por si solo que el
+evento haya sido creado en el ERP. La importacion de ordenes si consulta Odoo.
+
+
+10. CONFIGURACION Y EJECUCION EN WINDOWS
+----------------------------------------
+
+Requisitos descritos por el proyecto: Python 3.11 o posterior, PostgreSQL en
+ejecucion y el archivo best.pt en la ruta configurada. La URL de base de datos
+por defecto apunta a PostgreSQL local; el README menciona un contenedor Docker,
+pero no hay un archivo compose en este proyecto.
+
+Desde PowerShell, en la carpeta server:
+
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  pip install -r requirements.txt
+  Copy-Item .env.example .env
+
+Editar .env con los valores locales correctos, especialmente DATABASE_URL y
+SECRET_KEY. Asegurar que PostgreSQL este disponible antes de continuar.
+
+Preparar esquema e informacion inicial:
+
+  alembic upgrade head
+  python app/scripts/create_admin.py --username <usuario> --password <clave-fuerte>
+  python app/scripts/seed_cameras.py
+
+El script seed_cameras.py crea, si no existen por zona, tres camaras de ejemplo
+con fuentes 0, 1 y 2, y registra el mapa clase-etapa.
+
+Iniciar el servidor:
+
+  uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+Direcciones locales habituales:
+- API: http://localhost:8000/
+- Swagger: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
+- OpenAPI: http://localhost:8000/openapi.json
+- Salud: http://localhost:8000/api/v1/health
+
+El README original muestra comandos Bash; arriba estan escritos para
+PowerShell. Si la activacion de .venv es bloqueada por la politica de scripts
+de Windows, activar el entorno siguiendo la politica local del equipo o usar
+directamente `.venv\Scripts\python.exe` y `.venv\Scripts\uvicorn.exe`.
+
+
+11. PRUEBAS Y ARCHIVOS AUXILIARES
+---------------------------------
+
+Ejecutar pruebas segun el README:
+
+  pytest -v tests
+
+Las pruebas usan la configuracion real de la aplicacion y SessionLocal; no se
+ve una base SQLite aislada ni reemplazo automatico de la dependencia de base de
+datos. Algunas pruebas crean ordenes/detecciones y el test de modelo espera que
+YOLO este cargado. Ejecutarlas solo contra una base de desarrollo o pruebas,
+con PostgreSQL y datos requeridos preparados.
+
+prueba.py es un programa separado para probar YOLO y una camara IP/local con
+OpenCV, hilos y ventanas de escritorio. No es una ruta de FastAPI ni forma
+parte del arranque normal del backend.
+
+test_main.http contiene ejemplos para GET / y GET /hello/User. La segunda ruta
+no aparece implementada en la API revisada; el archivo es una muestra antigua
+o incompleta.
+
+
+12. RESUMEN DE LO QUE SI Y NO HACE
+---------------------------------
+
+Si hace:
+- API REST versionada, documentada con OpenAPI.
+- Autenticacion JWT Bearer para las rutas que la exigen y permisos por rol.
+- Inferencia YOLO con cargas de imagen y registro de resultados.
+- Stream de camara en HTTP MJPEG.
+- Registro de eventos y asociacion manual a ordenes.
+- Consultas de salud, dashboard y tendencias.
+- Consulta de ordenes en Odoo y configuracion de esa integracion.
+
+No se encontro implementado en el codigo revisado:
+- WebSockets.
+- Una interfaz frontend dentro de esta carpeta.
+- Procesamiento persistente de eventos desde cada cuadro del stream.
+- Asociacion automatica de detecciones a ordenes.
+- Escritura XML-RPC real de eventos de produccion hacia Odoo.
+- Guardado de imagenes de inferencia en disco.
+- Endpoint de renovacion de JWT o cierre de sesion en el servidor.
+
+Este archivo es una guia tecnica del estado revisado del backend. Si se
+modifican rutas, permisos, variables de entorno o flujos, conviene actualizar
+esta guia junto con esos cambios.

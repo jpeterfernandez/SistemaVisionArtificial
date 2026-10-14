@@ -1,0 +1,218 @@
+CAMBIOS - 13/10/2026
+
+Objetivo
+Aplicar las recomendaciones internas del sistema. En esta fase quedan fuera
+nuevos cambios de Odoo y de latencia/conectividad, según el alcance solicitado.
+
+Cambios realizados
+- Los streams requieren un ticket de dos minutos vinculado al usuario y cámara;
+  el JWT de sesión ya no se coloca en la URL. Se verifica usuario activo y zona.
+- Se enmascaran las fuentes de cámaras para roles no administradores.
+- El backend sondea salud de cámaras, evita abrir un segundo lector mientras
+  existe un stream activo y registra desconexión/hora de comprobación. La UI
+  muestra alertas y reintenta streams con pausa limitada.
+- Las cargas de imágenes se leen con límite por bloques y validan formato real,
+  dimensiones y contenido antes de ejecutar YOLO.
+- Las órdenes se completan con una acción explícita e idempotente desde
+  VINILADO; una detección no incrementa cantidades por sí sola.
+- Las vistas usan carga diferida. El bundle inicial pasó de aproximadamente
+  816 kB a 269 kB; `npm run lint` termina sin advertencias.
+- Se añadieron liveness/readiness, telemetría protegida de solicitudes y
+  scripts de respaldo, restauración en base destino y retención opt-in.
+- Se eliminaron contraseñas por defecto del script de administrador y se
+  añadieron validaciones de secretos de producción y cifrado de API key Odoo.
+  Este trabajo ya existente no se amplía en la fase actual.
+
+Validación
+- Backend: 34 pruebas aprobadas.
+- Frontend: build y lint aprobados.
+- Migraciones aplicadas localmente hasta `d9164a70be21`.
+
+Archivos de soporte: recomendaciones.txt, server/README.md, server/.env.example,
+server/requirements.txt, server/app/core/config.py, server/app/core/secrets.py,
+server/app/services/camera_monitor.py, server/app/services/request_metrics.py,
+server/app/services/integration_health.py, server/app/db/models/audit_log.py,
+server/app/repositories/audit_repository.py, server/app/api/v1/endpoints/audit.py,
+server/app/scripts/backup_database.py, server/app/scripts/restore_database.py,
+server/app/scripts/prune_backups.py, server/alembic/versions/9a5c1e4f7b20_add_audit_logs.py.
+
+CAMBIOS - 13/10/2026
+Objetivo
+Mejorar la fluidez del video en vivo y aumentar en un hilo el paralelismo CPU
+de YOLO, conservando la resolución y los umbrales actuales de detección.
+
+Cambios realizados
+- La captura de cada stream ahora lee frames en un hilo de fondo y conserva
+  solo el más reciente. Los frames antiguos se descartan mientras YOLO procesa,
+  evitando que la transmisión acumule retraso.
+- PyTorch suma un hilo intra-op al valor predeterminado al ejecutar YOLO en CPU.
+  El incremento respeta el número de CPUs disponibles y se puede ajustar con
+  YOLO_CPU_EXTRA_THREADS. No se cambia este ajuste cuando YOLO usa GPU.
+- El stream en vivo usa YOLO_STREAM_IMG_SIZE=416 en lugar de 640. Este valor es
+  configurable y solo afecta video; las inferencias de imágenes conservan 640.
+- Se agregó una prueba para verificar que el lector conserva y entrega el frame
+  más reciente.
+
+Por qué
+Antes, el mismo ciclo leía un frame, esperaba a que terminara YOLO y recién
+entonces leía el siguiente. Separar la captura permite mantener al día el frame
+que se muestra; el hilo CPU adicional permite a PyTorch paralelizar más trabajo.
+La comparación local con best.pt dio una mediana aproximada de 823 ms a 640 y
+453 ms a 416. Se eligió 416 como balance entre velocidad y detalle; bajar más
+puede perder objetos pequeños. El hilo adicional se conservó como ajuste
+solicitado, aunque la medición local de 4 frente a 5 hilos no mostró aceleración.
+La mejora final depende del hardware, de la cámara y del costo de inferencia.
+
+Archivos modificados
+- server/app/api/v1/endpoints/cameras.py
+- server/app/services/yolo_service.py
+- server/app/core/config.py
+- server/.env.example
+- server/tests/test_backend.py
+- cambios.txt
+
+CAMBIOS - 13/10/2026
+
+Objetivo
+Permitir escoger dónde procesa YOLO según el hardware disponible, con controles
+experimentales visibles y utilizables únicamente en el ambiente de desarrollo.
+
+Cambios realizados
+- El modo automático detecta CUDA y selecciona GPU solo si encuentra al menos
+  1 GB de memoria libre; si no, usa CPU. La opción GPU manual se rechaza cuando
+  PyTorch no dispone de CUDA.
+- La configuración controla hilos CPU, límite de memoria GPU y tamaño del
+  stream. Cambiar el perfil recarga el modelo bajo un bloqueo de inferencia.
+- Si el modelo no puede cargarse con el perfil nuevo, se restaura el perfil y
+  modelo anteriores para que YOLO siga disponible.
+- El perfil se guarda en la base de datos y se vuelve a aplicar al arrancar el
+  backend en desarrollo. En otros ambientes, el endpoint lo deshabilita.
+- Configuración muestra hardware detectado, el dispositivo activo, los controles
+  experimentales y una advertencia sobre la pausa breve al recargar YOLO.
+- Se agregaron pruebas para la selección automática y el bloqueo de producción.
+
+Por qué
+YOLO recibe explícitamente el dispositivo de inferencia y el modelo se carga al
+iniciar; editar una preferencia sin actualizar el modelo no cambiaría el lugar
+real del procesamiento. El perfil aplica la configuración al modelo, limita los
+recursos disponibles y protege el cambio con un bloqueo para no competir con
+inferencias activas. La selección automática prioriza CUDA compatible con memoria
+suficiente y conserva CPU como alternativa.
+
+Archivos modificados
+- server/app/api/v1/endpoints/cameras.py
+- server/app/api/v1/endpoints/models.py
+- server/app/api/v1/endpoints/settings.py
+- server/app/core/config.py
+- server/app/main.py
+- server/app/schemas/detection.py
+- server/app/services/yolo_service.py
+- server/.env.example
+- server/tests/test_backend.py
+- frontend/src/api/endpoints.ts
+- frontend/src/types/index.ts
+- frontend/src/views/SettingsView.tsx
+- frontend/src/index.css
+- cambios.txt
+
+CAMBIOS - 13/10/2026
+
+Objetivo
+Aplicar las mejoras de operación solicitadas, con permisos por rol y zona para
+usuarios, órdenes, cámaras, eventos y detecciones, y exportación de registros.
+Odoo y las métricas de latencia/conectividad quedan fuera del alcance de esta
+fase, según lo solicitado.
+
+Cambios realizados
+- Se agregaron allowed_zones a usuarios y zone a órdenes. ADMIN tiene alcance
+  global; OPERATOR y VIEWER quedan limitados a las zonas asignadas. Las cuentas
+  existentes migran con lista vacía para no otorgar acceso automáticamente.
+- El backend aplica los permisos en listados, detalles, historial de órdenes,
+  dashboard, tendencias, detecciones, inferencias, cámaras, tickets de stream,
+  asociación de eventos y confirmación de unidades.
+- Crear órdenes requiere una zona permitida. Asociar un evento a una orden de
+  otra zona se rechaza.
+- Eventos y detecciones conservan un snapshot de su zona. Cambiar una cámara de
+  zona no cambia el alcance de sus registros históricos.
+- Usuarios permite asignar zonas, roles, activar/desactivar y restablecer
+  contraseñas; se conserva la protección del último administrador activo.
+- La navegación y acciones visibles reflejan roles: configuración, usuarios y
+  auditoría solo para ADMIN; VIEWER no puede iniciar inferencias ni acciones de
+  escritura.
+- Eventos, órdenes, detecciones y auditoría se pueden exportar a CSV con acceso
+  y filtros por zona aplicados en servidor.
+- Se agregó historial de auditoría y migraciones Alembic para auditoría, zonas
+  y snapshots de registros.
+- Se corrigió la prueba de órdenes para que no dependa de cámaras sembradas
+  fuera de la suite.
+
+Validación
+- Backend: 34 pruebas aprobadas.
+- Frontend: build y lint aprobados; chunk inicial aproximado de 269 kB.
+- Migraciones aplicadas localmente hasta d9164a70be21.
+
+Archivos modificados
+- server/app/db/models/user.py
+- server/app/db/models/production_order.py
+- server/app/db/models/production_event.py
+- server/app/db/models/detection.py
+- server/app/schemas/user.py
+- server/app/schemas/production.py
+- server/app/schemas/event.py
+- server/app/schemas/detection.py
+- server/app/core/zones.py
+- server/app/repositories/event_repository.py
+- server/app/repositories/detection_repository.py
+- server/app/repositories/production_repository.py
+- server/app/services/detection_service.py
+- server/app/services/production_service.py
+- server/app/api/v1/endpoints/users.py
+- server/app/api/v1/endpoints/cameras.py
+- server/app/api/v1/endpoints/production.py
+- server/app/api/v1/endpoints/events.py
+- server/app/api/v1/endpoints/detections.py
+- server/app/api/v1/endpoints/dashboard.py
+- server/app/api/v1/endpoints/audit.py
+- server/alembic/versions/c83d1f2a6b90_add_zone_access.py
+- server/alembic/versions/d9164a70be21_snapshot_record_zones.py
+- server/README.md
+- server/tests/test_backend.py
+- frontend/src/App.tsx
+- frontend/src/components/Sidebar.tsx
+- frontend/src/types/index.ts
+- frontend/src/api/endpoints.ts
+- frontend/src/views/UsersView.tsx
+- frontend/src/views/ProductionView.tsx
+- frontend/src/views/EventsView.tsx
+- frontend/src/views/VisionView.tsx
+- frontend/src/views/CamerasView.tsx
+- frontend/src/views/AuditView.tsx
+- recomendaciones.txt
+- cambios.txt
+
+CAMBIOS - 13/10/2026
+
+Objetivo
+Mostrar el consumo real de recursos del backend YOLO y la latencia de inferencia
+en la vista de configuración, solo durante desarrollo.
+
+Cambios realizados
+- Se agregó GET /models/metrics, protegido para administradores y deshabilitado
+  fuera del ambiente de desarrollo.
+- El backend publica CPU y RAM del proceso, memoria GPU reservada/asignada y
+  latencia última/promedio de hasta 60 inferencias recientes.
+- Ajustes consulta métricas cada cinco segundos y presenta CPU, RAM, VRAM y
+  latencia en indicadores y un gráfico de los últimos cinco minutos.
+- Se declaró psutil como dependencia y se agregó una prueba para el límite por
+  ambiente del endpoint.
+
+Archivos modificados
+- server/app/services/yolo_service.py
+- server/app/api/v1/endpoints/models.py
+- server/requirements.txt
+- server/tests/test_backend.py
+- frontend/src/api/endpoints.ts
+- frontend/src/types/index.ts
+- frontend/src/views/SettingsView.tsx
+- frontend/src/index.css
+- cambios.txt

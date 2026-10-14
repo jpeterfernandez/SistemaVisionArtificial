@@ -1,0 +1,248 @@
+DOCUMENTACION TECNICA DEL PROYECTO CARDINOVA
+============================================
+
+1. ALCANCE DE ESTE DOCUMENTO
+----------------------------
+Este documento describe el proyecto que se encuentra en la carpeta frontend. Se revisaron sus archivos de entrada, vistas, componentes, contexto de autenticación, cliente HTTP, tipos, estilos, configuración y README.
+
+El espacio de trabajo disponible contiene el frontend, no el código fuente del backend. Por eso, las rutas y datos del servidor que aparecen aquí se describen según las llamadas que hace este frontend. El README y la pantalla de configuración identifican el backend esperado como FastAPI, con SQLAlchemy 2.0 y PostgreSQL 15; esos detalles no se pueden verificar contra fuentes del servidor desde esta carpeta.
+
+2. QUE ES Y QUE ARQUITECTURA USA
+--------------------------------
+Cardinova es una aplicación web de una sola página (SPA) para consultar y operar un sistema de producción asistido por visión artificial. Está desarrollada con React 19, TypeScript y Vite.
+
+La arquitectura del frontend se organiza por responsabilidades:
+
+- Presentación: las vistas de src/views muestran paneles, formularios, tablas y estados.
+- Navegación y composición: App.tsx registra las rutas y dispone el menú lateral junto al contenido.
+- Estado de sesión: AuthContext.tsx mantiene usuario y token, y expone iniciar/cerrar sesión.
+- Acceso a datos: api/endpoints.ts define funciones para cada operación del sistema.
+- Transporte HTTP: api/client.ts construye las peticiones fetch, añade autenticación, interpreta errores y devuelve JSON.
+- Contratos de datos: types/index.ts define interfaces y tipos compartidos para las respuestas del servidor.
+- Componentes compartidos: src/components contiene elementos reutilizables, como navegación y tendencias de producción.
+
+El flujo general es:
+
+1. index.html declara el elemento HTML con id root.
+2. src/main.tsx crea la raíz de React, carga los estilos globales y renderiza App.
+3. App envuelve la aplicación con AuthProvider y BrowserRouter.
+4. AuthProvider comprueba si hay una sesión guardada y consulta /auth/me para validarla.
+5. Si no hay sesión válida se muestra LoginView. Si está autenticada se muestra Sidebar y la vista que corresponda a la ruta.
+6. Las vistas llaman funciones de api/endpoints.ts; estas usan apiRequest de api/client.ts para comunicarse con el backend.
+7. El backend devuelve datos JSON (o una transmisión de imagen para video); React actualiza el estado de la pantalla.
+
+3. ESTRUCTURA DE CARPETAS Y ARCHIVOS
+-----------------------------------
+
+frontend/
+|-- index.html                 Documento HTML inicial; incluye el elemento root y carga src/main.tsx.
+|-- package.json               Dependencias y comandos npm del frontend.
+|-- package-lock.json          Versiones resueltas para instalaciones reproducibles con npm.
+|-- vite.config.ts             Configuración de Vite y complemento de React.
+|-- tsconfig.json              Configuración raíz que referencia las configuraciones de TypeScript.
+|-- tsconfig.app.json          Opciones de TypeScript para el código de src/.
+|-- tsconfig.node.json         Opciones para vite.config.ts y el entorno Node.
+|-- .env.example               Ejemplo de configuración; documenta VITE_API_URL.
+|-- .env                       Configuración local del entorno. No se reproducen aquí sus valores.
+|-- .gitignore                 Excluye dependencias, compilados, logs y archivos locales del editor.
+|-- .oxlintrc.json             Configuración del analizador Oxlint.
+|-- README.md                  Instrucciones y resumen del proyecto.
+|-- login-mobile.png           Imagen de referencia presente en la raíz.
+|-- public/
+|   |-- favicon.svg            Icono del sitio.
+|   |-- icons.svg              Colección de iconos SVG.
+|   |-- isotipo.svg            Isotipo usado por la marca.
+|   `-- wordmark.svg            Logotipo en texto usado en el inicio de sesión.
+|-- src/
+|   |-- main.tsx               Punto de entrada React; importa index.css.
+|   |-- App.tsx                Proveedores, control de sesión y rutas de la aplicación.
+|   |-- App.css                Estilos heredados de la plantilla inicial; no se importa desde main.tsx ni App.tsx.
+|   |-- index.css              Variables, estilos globales, estructura, componentes visuales y adaptación móvil.
+|   |-- api/
+|   |   |-- client.ts           Cliente HTTP genérico y tratamiento común de errores/autenticación.
+|   |   `-- endpoints.ts        Funciones de acceso a los endpoints del backend.
+|   |-- assets/
+|   |   |-- hero.png            Imagen incluida en los recursos del frontend.
+|   |   |-- react.svg           Recurso de la plantilla de React.
+|   |   `-- vite.svg            Recurso de la plantilla de Vite.
+|   |-- components/
+|   |   |-- Sidebar.tsx                 Menú, navegación, usuario y cierre de sesión.
+|   |   |-- ProductionTrendPanel.tsx    Consulta periódica y controles del gráfico de tendencias.
+|   |   `-- ProductionTrendChart.tsx    Gráfico de líneas por etapa productiva usando Recharts.
+|   |-- context/
+|   |   `-- AuthContext.tsx     Estado de autenticación compartido.
+|   |-- types/
+|   |   `-- index.ts            Tipos de usuario, cámaras, órdenes, eventos y respuestas API.
+|   |-- utils/
+|   |   `-- notifications.ts    Toasts y cuadro de confirmación basados en SweetAlert2.
+|   `-- views/
+|       |-- LoginView.tsx       Formulario de inicio de sesión.
+|       |-- LoginView.css       Estilos del inicio de sesión.
+|       |-- DashboardView.tsx   Resumen de la operación de planta.
+|       |-- ProductionView.tsx  Órdenes de fabricación y líneas de tiempo.
+|       |-- VisionView.tsx      Estado del modelo y análisis de imágenes.
+|       |-- CamerasView.tsx     Cámaras, zonas, pruebas y visualización de streams.
+|       |-- EventsView.tsx      Historial, filtros y asociación de eventos a órdenes.
+|       |-- OdooView.tsx        Estado, configuración y sincronizaciones de Odoo.
+|       `-- SettingsView.tsx    Parámetros generales e integración Odoo.
+
+También existe .playwright-mcp con archivos auxiliares de capturas/estado de páginas. No es parte del flujo normal de ejecución de la aplicación.
+
+4. ARRANQUE Y NAVEGACION
+------------------------
+main.tsx monta App dentro de React StrictMode. App configura AuthProvider y BrowserRouter. AppContent consulta el contexto de autenticación:
+
+- Mientras se valida la sesión muestra una pantalla de carga.
+- Sin sesión muestra LoginView.
+- Con sesión muestra Sidebar y el contenido de la ruta.
+
+Rutas configuradas:
+
+- /dashboard: panel general.
+- /production: órdenes de producción.
+- /vision: laboratorio de visión artificial.
+- /cameras: cámaras y zonas.
+- /events: historial de eventos.
+- /odoo: integración ERP.
+- /settings: configuración global.
+- Cualquier otra ruta redirige a /dashboard.
+
+La barra lateral permite contraerse; ese ajuste se guarda en localStorage bajo cardinova_sidebar_collapsed. En pantallas pequeñas presenta un menú móvil.
+
+5. HTTP, API Y CONFIGURACION DEL SERVIDOR
+----------------------------------------
+La dirección base del API se toma de VITE_API_URL. Si no está definida, client.ts usa:
+
+http://localhost:8000/api/v1
+
+El archivo .env.example también muestra esta dirección como ejemplo. Para otro entorno se configura VITE_API_URL en el entorno usado por Vite. Las variables cuyo nombre empieza por VITE_ se incorporan al bundle del cliente; no deben contener contraseñas, claves privadas ni secretos.
+
+apiRequest<T> realiza las llamadas usando fetch:
+
+- Une la URL base con la ruta indicada.
+- Lee el token cardinova_token desde localStorage y, si existe, agrega Authorization: Bearer <token>, salvo que la petición ya tenga Authorization.
+- Agrega Content-Type: application/json por defecto.
+- Para FormData no establece Content-Type manualmente, para que el navegador añada el boundary correcto del multipart.
+- En respuestas no exitosas intenta obtener el campo detail del JSON y lanza ApiError con el estado HTTP y el mensaje.
+- Si fetch falla por un problema de conexión, genera ApiError con status 0.
+- En estado HTTP 401, excepto durante /auth/login, borra token y usuario y emite cardinova_auth_expired. AuthContext escucha ese evento y cierra la sesión.
+- Las respuestas exitosas se leen como JSON.
+
+Los métodos de endpoints.ts se organizan así:
+
+Autenticación:
+- POST /auth/login: envía username y password como FormData; recibe access_token, token_type y usuario.
+- GET /auth/me: obtiene el usuario asociado al token actual.
+
+Panel y producción:
+- GET /dashboard/stats: contadores, estados, cámaras y eventos recientes.
+- GET /dashboard/production-trends: tendencia filtrada por start, end e interval_minutes.
+- GET /production/orders: lista órdenes y permite filtros/paginación.
+- POST /production/orders: crea una orden.
+- GET /production/orders/{id}/timeline: consulta la línea de tiempo.
+
+Visión artificial y detecciones:
+- GET /models/status: estado, clases y parámetros del modelo.
+- POST /detections/image: envía una imagen en multipart/form-data con parámetros opcionales de cámara, confianza y etiquetas.
+- GET /detections: consulta detecciones con skip y limit.
+
+Cámaras:
+- GET /cameras: lista cámaras.
+- POST /cameras: crea una cámara.
+- PUT /cameras/{id}: actualiza sus datos.
+- DELETE /cameras/{id}: elimina una cámara.
+- POST /cameras/{id}/test: prueba la cámara.
+- GET /cameras/{id}/stream: URL usada por el navegador para mostrar el stream. La URL se arma en getCameraStreamUrl y no se solicita mediante apiRequest.
+
+Eventos:
+- GET /events: consulta eventos con filtros por etapa, cámara, orden y estados.
+- POST /events/{id}/associate: asocia un evento a una orden.
+
+Odoo:
+- GET /odoo/config y PUT /odoo/config: consulta y actualiza configuración.
+- GET /odoo/status: consulta disponibilidad y conexión.
+- POST /odoo/sync-orders: importa o actualiza órdenes desde Odoo.
+- POST /odoo/sync-events: solicita sincronizar eventos pendientes.
+
+Configuración:
+- GET /settings: consulta parámetros del sistema.
+- PUT /settings/{key}: actualiza el valor de una configuración.
+
+6. SESION Y TOKEN
+-----------------
+Al iniciar sesión, AuthContext crea FormData con usuario y contraseña y llama a /auth/login. La respuesta entrega un access_token y los datos del usuario. El frontend guarda:
+
+- Token: localStorage con la clave cardinova_token.
+- Usuario: localStorage con la clave cardinova_user.
+
+Al iniciar o recargar la aplicación, si encuentra token consulta /auth/me antes de dar por válida la sesión. Si falla, cierra la sesión. El cierre manual también elimina ambos valores.
+
+El tipo User define los roles ADMIN, OPERATOR y VIEWER. Algunas opciones se ocultan en la interfaz a quienes no son ADMIN: configuración general, gestión de cámaras y configuración de Odoo. Esto es control de interfaz, no una barrera de seguridad: el backend debe validar el rol y los permisos en cada operación.
+
+7. QUE HACE CADA MODULO
+-----------------------
+Panel General (DashboardView): presenta conteos de órdenes, detecciones, eventos y pendientes; estados de cámaras, distribución por etapa y eventos recientes. Las estadísticas se consultan al abrir la vista o al pulsar Actualizar. El componente de tendencias consulta un periodo configurable y vuelve a consultar cada 60 segundos.
+
+Producción (ProductionView): lista órdenes con filtros por estado y etapa, permite crear órdenes y consultar el historial de etapas de una orden. La creación y consulta se realizan en el backend.
+
+Visión Artificial (VisionView): solicita al backend el estado del modelo y cámaras disponibles. Permite seleccionar una imagen, cámara opcional, umbral de confianza y visualización del porcentaje; manda la imagen al endpoint de detección y presenta imagen anotada, clases, cajas, confianza y duración que devuelve el servidor.
+
+Cámaras y Zonas (CamerasView): muestra cámaras por zona o en cuadrícula, prueba conexión, crea/edita/elimina cámaras y muestra streams. El formulario admite fuentes de cámara USB, RTSP, HTTP/MJPEG y cámaras móviles tipo IP Webcam o DroidCam. El video se inserta como imagen/stream desde /cameras/{id}/stream.
+
+Eventos (EventsView): filtra el historial por etapa y estado de asociación/sincronización. Permite vincular eventos pendientes con una orden existente.
+
+Integración Odoo (OdooView): consulta la conectividad, permite a ADMIN editar URL/base de datos/usuario/tiempo de espera/clave API, e inicia sincronización de órdenes y eventos. La clave API de Odoo no se vuelve a mostrar; el formulario la envía solo cuando se introduce un valor nuevo o se pide eliminarla.
+
+Configuración (SettingsView): solo muestra los controles de edición a ADMIN. Permite activar/desactivar Odoo y modificar los parámetros generales que el backend devuelva.
+
+8. TIPOS, ESTILOS Y LIBRERIAS
+-----------------------------
+src/types/index.ts contiene los contratos TypeScript para las entidades del frontend, incluidos User, Camera, ProductionOrder, ProductionEvent, DashboardStats, respuestas de detección y configuración de Odoo. Estos tipos ayudan al frontend a manejar los datos, pero no sustituyen la validación del servidor.
+
+src/index.css define variables de color, tipografía, distribución, tablas, formularios, modales y reglas adaptables a móviles. LoginView.css contiene los estilos específicos de acceso. App.css conserva estilos de la plantilla inicial y no se importa desde los puntos de entrada actuales.
+
+Dependencias principales de package.json:
+- react y react-dom: interfaz y renderizado.
+- react-router-dom: navegación.
+- lucide-react: iconos.
+- recharts: gráfico de tendencias.
+- sweetalert2: notificaciones y confirmaciones.
+- Vite, TypeScript, @vitejs/plugin-react y Oxlint: desarrollo, compilación y análisis.
+
+9. EJECUCION Y COMANDOS
+-----------------------
+Requisitos: Node.js y npm instalados, y un backend accesible en la dirección configurada.
+
+Instalar dependencias:
+    npm install
+
+Iniciar el servidor de desarrollo:
+    npm run dev
+
+Compilar TypeScript y generar la aplicación para producción en dist/:
+    npm run build
+
+Analizar el código con Oxlint:
+    npm run lint
+
+Previsualizar el build:
+    npm run preview
+
+El README indica que Vite suele iniciar en http://localhost:5173. La aplicación no funcionará con datos reales si el API no está levantado, la URL no es accesible o el backend no admite las solicitudes de origen cruzado (CORS) del frontend.
+
+10. SEGURIDAD Y LIMITES IMPORTANTES
+-----------------------------------
+- El cliente usa localStorage para guardar el token. Un script ejecutado dentro del mismo origen que consiga una vulnerabilidad XSS podría leerlo. Mantener dependencias actualizadas, evitar insertar HTML no confiable y desplegar con HTTPS.
+- El stream de cámara incluye el token en la cadena de consulta (parámetro token). Los tokens en URL pueden acabar en logs, historiales o herramientas de monitoreo. No se debe compartir esa URL; conviene que el despliegue use HTTPS y que el backend/proxy evite registrar el parámetro. Si el backend lo permite, una autenticación de stream que no transporte el token en la URL es preferible.
+- El valor de ejemplo y el valor alternativo del cliente usan HTTP sin cifrado. Para producción se debe configurar una URL HTTPS y proteger también el tráfico entre proxy y backend según la infraestructura.
+- VITE_API_URL es configuración pública del cliente, no un lugar para guardar secretos.
+- El control visual por roles no reemplaza autorización en el servidor. El backend es responsable de validar token, rol, acceso a rutas y datos recibidos.
+- El formulario indica formatos y un tamaño máximo de 15 MB para imágenes, pero en el código visible no hay validación explícita del tamaño antes del envío. La validación definitiva debe existir en el backend.
+- La UI permite configurar fuentes de cámara que pueden contener credenciales (por ejemplo, URLs RTSP). El backend debe protegerlas al almacenarlas y no devolver secretos innecesariamente.
+- No se incluyen credenciales, token real ni valores del archivo .env en esta documentación.
+
+11. RESUMEN DEL FLUJO DE DATOS
+------------------------------
+Persona usuaria -> vista React -> función de endpoints.ts -> apiRequest en client.ts -> fetch HTTP con token Bearer -> API backend -> respuesta JSON -> estado React -> pantalla.
+
+Para una detección, la imagen viaja como multipart/form-data. Para el video en vivo, el navegador solicita directamente el endpoint de stream de la cámara; esa ruta usa un parámetro de token en la URL. El frontend coordina la interfaz y las peticiones, mientras que el backend realiza las operaciones persistentes, la autorización, el acceso a cámaras, la inferencia, la base de datos y la integración con Odoo.
