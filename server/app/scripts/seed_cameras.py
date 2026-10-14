@@ -13,43 +13,9 @@ from app.db.models.system_setting import SystemSetting
 def seed_initial_cameras_and_settings():
     db = SessionLocal()
     try:
-        # Initial 3 production cameras
-        cameras_data = [
-            {
-                "name": "Cámara Zona 1 - Doblado",
-                "zone": "DOBLADO_LAMINA",
-                "source": "0",
-                "confidence_threshold": 0.60
-            },
-            {
-                "name": "Cámara Zona 2 - Armado",
-                "zone": "ARMADO_ESTRUCTURAL",
-                "source": "1",
-                "confidence_threshold": 0.65
-            },
-            {
-                "name": "Cámara Zona 3 - Vinilado",
-                "zone": "VINILADO",
-                "source": "2",
-                "confidence_threshold": 0.70
-            }
-        ]
+        # Ya NO se crean cámaras ficticias/automáticas con índices 0, 1 o 2.
+        # Solo se registrarán las cámaras que el usuario agregue manualmente desde la interfaz o API.
 
-        for cam in cameras_data:
-            existing = db.query(Camera).filter(Camera.zone == cam["zone"]).first()
-            if not existing:
-                camera = Camera(
-                    name=cam["name"],
-                    zone=cam["zone"],
-                    source=cam["source"],
-                    confidence_threshold=cam["confidence_threshold"],
-                    is_active=True,
-                    is_connected=False
-                )
-                db.add(camera)
-                print(f"[+] Cámara registrada: {cam['name']} ({cam['zone']})")
-            else:
-                print(f"[i] Cámara para zona {cam['zone']} ya existe (ID: {existing.id})")
 
         # Initial class to stage mapping setting
         mapping = {

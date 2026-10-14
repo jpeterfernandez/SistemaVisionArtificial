@@ -866,10 +866,11 @@ export const CamerasView: React.FC = () => {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [newZone, setNewZone] = useState('DOBLADO_LAMINA');
-  const [newSource, setNewSource] = useState('0');
-  const [newProto, setNewProto] = useState<ProtocolType>('USB');
+  const [newSource, setNewSource] = useState('');
+  const [newProto, setNewProto] = useState<ProtocolType>('RTSP');
   const [newConf, setNewConf] = useState(0.60);
   const [creating, setCreating] = useState(false);
+
 
   const fetchCameras = useCallback(async () => {
     try {
@@ -935,9 +936,10 @@ export const CamerasView: React.FC = () => {
     try {
       await createCameraApi({ name: newName, zone: newZone, source: newSource, confidence_threshold: newConf });
       setShowCreate(false);
-      setNewName(''); setNewSource('0'); setNewConf(0.60); setNewProto('USB');
+      setNewName(''); setNewSource(''); setNewConf(0.60); setNewProto('RTSP');
       await fetchCameras();
       showSuccessToast('Cámara creada correctamente.');
+
     } catch (e: any) {
       showErrorToast(e.message || 'Error al crear la cámara');
     } finally {
