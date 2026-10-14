@@ -7,7 +7,7 @@ import {
   getYoloRuntimeMetricsApi
 } from '../api/endpoints';
 import type { SystemSetting, YoloRuntimeConfiguration, YoloRuntimeMetrics, YoloRuntimeStatus } from '../types';
-import { Save, RefreshCw, ShieldAlert, Cpu, SlidersHorizontal, Link2, Activity } from 'lucide-react';
+import { Save, RefreshCw, ShieldAlert, Cpu, SlidersHorizontal, Link2, Activity, RotateCcw } from 'lucide-react';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useAuth } from '../context/useAuth';
 import { showErrorToast, showSuccessToast } from '../utils/notifications';
@@ -133,6 +133,28 @@ export const SettingsView: React.FC = () => {
       setSavingRuntime(false);
     }
   };
+
+  const handleRuntimeReset = async () => {
+    const defaultThreads = Math.min(runtimeStatus?.hardware?.cpu_logical_cores || 4, 4);
+    const defaults: YoloRuntimeConfiguration = {
+      device_mode: 'auto',
+      cpu_threads: defaultThreads,
+      gpu_memory_fraction: 0.8,
+      stream_img_size: 320
+    };
+    setSavingRuntime(true);
+    try {
+      const updated = await updateYoloRuntimeConfigurationApi(defaults);
+      setRuntimeStatus(updated);
+      setRuntimeConfiguration(updated.configuration || defaults);
+      showSuccessToast('Recursos de YOLO restablecidos a los valores predeterminados óptimos.');
+    } catch (err: any) {
+      showErrorToast(err.message || 'Error restableciendo la configuración predeterminada');
+    } finally {
+      setSavingRuntime(false);
+    }
+  };
+
 
   if (user?.role !== 'ADMIN') {
     return (
@@ -405,15 +427,27 @@ export const SettingsView: React.FC = () => {
 
               <div className="settings-runtime-footer">
                 <span>Activo: {runtimeStatus.active?.device.toUpperCase() || 'desconocido'} · {runtimeStatus.active?.device_reason}</span>
-                <button
-                  type="button"
-                  onClick={handleRuntimeSave}
-                  disabled={savingRuntime || !runtimeConfiguration.cpu_threads}
-                  className="btn settings-save"
-                >
-                  {savingRuntime ? <RefreshCw className="animate-spin" size={16} /> : <Save size={16} />}
-                  Aplicar recursos
-                </button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={handleRuntimeReset}
+                    disabled={savingRuntime}
+                    className="btn btn-outline"
+                    title="Restablecer configuración predeterminada optimizada para CPU"
+                  >
+                    <RotateCcw size={15} />
+                    Restablecer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRuntimeSave}
+                    disabled={savingRuntime || !runtimeConfiguration.cpu_threads}
+                    className="btn settings-save"
+                  >
+                    {savingRuntime ? <RefreshCw className="animate-spin" size={16} /> : <Save size={16} />}
+                    Aplicar recursos
+                  </button>
+                </div>
               </div>
             </div>
           </section>
