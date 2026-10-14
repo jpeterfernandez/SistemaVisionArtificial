@@ -1,5 +1,6 @@
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
+import os
 import sys
 import time
 import threading
@@ -100,24 +101,32 @@ class LatestFrameReader:
 
 
 def open_video_capture(source_val):
-    if isinstance(source_val, int) and sys.platform == "win32":
-        cap = cv2.VideoCapture(source_val, cv2.CAP_DSHOW)
-        if not cap.isOpened():
-            cap.release()
+    try:
+        if isinstance(source_val, int) and sys.platform == "win32":
+            cap = cv2.VideoCapture(source_val, cv2.CAP_DSHOW)
+            if not cap.isOpened():
+                cap.release()
+                cap = cv2.VideoCapture(source_val)
+        elif isinstance(source_val, str) and (source_val.startswith("rtsp://") or source_val.startswith("rtsps://")):
+            # Configurar FFmpeg para RTSP en TCP por defecto para evitar paquetes perdidos por UDP
+            try:
+                os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|analyzeduration;1000000|probesize;1000000|stimeout;5000000"
+            except Exception:
+                pass
+            cap = cv2.VideoCapture(source_val, cv2.CAP_FFMPEG)
+            if not cap.isOpened():
+                cap.release()
+                cap = cv2.VideoCapture(source_val)
+        else:
             cap = cv2.VideoCapture(source_val)
-    elif isinstance(source_val, str) and (source_val.startswith("rtsp://") or source_val.startswith("rtsps://")):
-        # Configurar FFmpeg para RTSP en TCP por defecto para evitar paquetes perdidos por UDP
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|analyzeduration;1000000|probesize;1000000|stimeout;5000000"
-        cap = cv2.VideoCapture(source_val, cv2.CAP_FFMPEG)
-        if not cap.isOpened():
-            cap.release()
-            cap = cv2.VideoCapture(source_val)
-    else:
-        cap = cv2.VideoCapture(source_val)
 
-    if cap.isOpened():
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    return cap
+        if cap.isOpened():
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        return cap
+    except Exception:
+        # Retornar objeto de captura cerrado o dummy si ocurre algún error inesperado
+        return cv2.VideoCapture()
+
 
 
 @router.get("", response_model=List[CameraResponse])
@@ -423,15 +432,23 @@ def stream_camera(
         raise ForbiddenException("El permiso de zona fue revocado")
 
     source_val = int(cam.source) if cam.source.isdigit() else cam.source
-    cap = open_video_capture(source_val)
-    if not cap.isOpened():
-        cap.release()
-        raise HTTPException(status_code=503, detail="No se pudo abrir la fuente de video de la cámara")
+    try:
+        cap = open_video_capture(source_val)
+        if not cap.isOpened():
+            cap.release()
+            raise HTTPException(status_code=503, detail="No se pudo abrir la fuente de video de la cámara")
 
-    success, first_frame = cap.read()
-    if not success:
-        cap.release()
-        raise HTTPException(status_code=503, detail="La cámara no está entregando video")
+        success, first_frame = cap.read()
+        if not success:
+            cap.release()
+            raise HTTPException(status_code=503, detail="La cámara no está entregando video")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Error inesperado al conectar con el dispositivo de video: {str(exc)}"
+        )
 
     cam.is_connected = True
     cam.last_check_at = datetime.now(timezone.utc)
@@ -441,3 +458,4 @@ def stream_camera(
         generate_live_mjpeg_stream(cap, cam.confidence_threshold, first_frame, show_confidence, camera_id),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
+
